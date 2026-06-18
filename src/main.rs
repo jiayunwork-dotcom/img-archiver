@@ -189,12 +189,11 @@ fn main() {
         let rendered = template::render_template(
             &args.template,
             &metadata,
+            &ext,
             *seq,
             args.seq_digits,
             &args.unknown_placeholder,
         );
-
-        let rendered = rendered.replace("{ext}", &ext);
 
         let target_path = args.output.join(&rendered);
 

@@ -3,6 +3,7 @@ use crate::types::ImageMetadata;
 pub fn render_template(
     template: &str,
     metadata: &ImageMetadata,
+    ext: &str,
     seq: usize,
     seq_digits: usize,
     unknown_placeholder: &str,
@@ -13,7 +14,6 @@ pub fn render_template(
     let day = format!("{}", dt.format("%d"));
     let camera = resolve_unknown(&metadata.camera_model, unknown_placeholder);
     let lens = resolve_unknown(&metadata.lens_model, unknown_placeholder);
-    let ext = get_ext_from_path_placeholder(&metadata);
     let width = format!("{}", metadata.width);
     let height = format!("{}", metadata.height);
     let seq_str = format!("{:0>width$}", seq, width = seq_digits);
@@ -38,7 +38,7 @@ pub fn render_template(
     result = result.replace("{lens}", &lens);
     result = result.replace("{city}", &city);
     result = result.replace("{province}", &province);
-    result = result.replace("{ext}", &ext);
+    result = result.replace("{ext}", ext);
     result = result.replace("{width}", &width);
     result = result.replace("{height}", &height);
     result = result.replace("{seq}", &seq_str);
@@ -60,10 +60,6 @@ fn resolve_unknown(value: &str, placeholder: &str) -> String {
     } else {
         value.to_string()
     }
-}
-
-fn get_ext_from_path_placeholder(_metadata: &ImageMetadata) -> String {
-    "jpg".to_string()
 }
 
 pub fn get_file_ext(path: &std::path::Path) -> String {

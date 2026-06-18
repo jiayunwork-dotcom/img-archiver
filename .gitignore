@@ -26,3 +26,10 @@ coverage/
 .pytest_cache/
 .cargo/
 pkg/
+dlltool.exe
+dlltool_new.exe
+dlltool.bat
+dlltool_wrapper.sh
+test.def
+test.lib
+tmp_wrapper/

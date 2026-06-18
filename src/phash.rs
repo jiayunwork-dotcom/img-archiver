@@ -59,15 +59,16 @@ pub fn compute_phash(path: &std::path::Path) -> Result<u64, String> {
     let median = values[values.len() / 2];
 
     let mut hash: u64 = 0;
+    let mut bit_index = 0u64;
     for r in 0..HASH_SIZE {
         for c in 0..HASH_SIZE {
             if r == 0 && c == 0 {
                 continue;
             }
-            let bit = (r * HASH_SIZE + c) as u64;
             if matrix[r * DCT_SIZE + c] >= median {
-                hash |= 1u64 << bit;
+                hash |= 1u64 << bit_index;
             }
+            bit_index += 1;
         }
     }
 
