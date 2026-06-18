@@ -1,0 +1,25 @@
+[package]
+name = "img-archiver"
+version = "1.0.0"
+edition = "2021"
+description = "Batch image metadata extraction and intelligent archiving CLI tool"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+walkdir = "2"
+kamadak-exif = "0.5"
+image = "0.25"
+sha2 = "0.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+indicatif = "0.17"
+chrono = "0.4"
+globset = "0.4"
+rustdct = "0.7"
+transpose = "0.2"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true

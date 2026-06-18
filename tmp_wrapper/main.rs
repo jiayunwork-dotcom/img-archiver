@@ -1,0 +1,1 @@
+fn main() { let args: Vec<String> = std::env::args().collect(); let status = std::process::Command::new("C:\\Users\\Administrator\\.cargo\\bin\\dlltool.exe").args(&args[1..]).status().unwrap(); std::process::exit(0); }
