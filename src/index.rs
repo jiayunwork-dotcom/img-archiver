@@ -1,3 +1,4 @@
+use crate::types::{GeoLocation, GpsLocation};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -8,6 +9,12 @@ pub struct IndexEntry {
     pub sha256: String,
     pub phash: u64,
     pub archived_at: String,
+    #[serde(default)]
+    pub date_time: Option<String>,
+    #[serde(default)]
+    pub gps: Option<GpsLocation>,
+    #[serde(default)]
+    pub geo: Option<GeoLocation>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

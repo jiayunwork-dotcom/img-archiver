@@ -1,15 +1,18 @@
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 #[derive(Parser, Debug, Clone)]
 #[command(name = "img-archiver", version, about = "Batch image metadata extraction and intelligent archiving tool")]
 pub struct Cli {
-    #[arg(help = "Source directory to scan for images")]
-    pub source: PathBuf,
+    #[command(subcommand)]
+    pub command: Option<Commands>,
+
+    #[arg(help = "Source directory to scan for images (legacy: use 'archive' subcommand instead)")]
+    pub source: Option<PathBuf>,
 
     #[arg(long, help = "Output directory for archived images")]
-    pub output: PathBuf,
+    pub output: Option<PathBuf>,
 
     #[arg(long, default_value = "{year}/{month}/{day}_{camera}_{seq}.{ext}", help = "Archive path template")]
     pub template: String,
@@ -52,6 +55,77 @@ pub struct Cli {
 
     #[arg(long, help = "Undo the last archive operation in the output directory")]
     pub undo: bool,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum Commands {
+    /// Archive images with metadata extraction and intelligent organization
+    Archive {
+        #[arg(help = "Source directory to scan for images")]
+        source: PathBuf,
+
+        #[arg(long, help = "Output directory for archived images")]
+        output: PathBuf,
+
+        #[arg(long, default_value = "{year}/{month}/{day}_{camera}_{seq}.{ext}", help = "Archive path template")]
+        template: String,
+
+        #[arg(long, default_value = "copy", help = "Archive mode: copy, move, link")]
+        mode: String,
+
+        #[arg(long, help = "Exclude paths matching glob pattern (repeatable)")]
+        exclude: Vec<String>,
+
+        #[arg(long, help = "Skip confirmation prompt")]
+        yes: bool,
+
+        #[arg(long, help = "Dry run mode - preview without executing")]
+        dry_run: bool,
+
+        #[arg(long, help = "Auto-create output directories")]
+        create_dirs: bool,
+
+        #[arg(long, default_value = "3", help = "Number of digits for sequence number")]
+        seq_digits: usize,
+
+        #[arg(long, default_value = "misc", help = "Placeholder for unknown variable values")]
+        unknown_placeholder: String,
+
+        #[arg(long, help = "YAML config file path")]
+        config: Option<PathBuf>,
+
+        #[arg(long, help = "Show extra statistics")]
+        stats: bool,
+
+        #[arg(long, help = "Export report as JSON to specified path")]
+        report_json: Option<PathBuf>,
+
+        #[arg(long, help = "Export report as standalone HTML to specified path")]
+        report_html: Option<PathBuf>,
+
+        #[arg(long, help = "Incremental mode: skip images already in archive index by SHA-256")]
+        incremental: bool,
+
+        #[arg(long, help = "Undo the last archive operation in the output directory")]
+        undo: bool,
+    },
+    /// Cluster archived images into albums by time and geolocation, generate thumbnail gallery
+    Album {
+        #[arg(long, help = "Input directory containing archived images (previous --output directory)")]
+        input: PathBuf,
+
+        #[arg(long, help = "Output directory for album pages and thumbnails")]
+        output_album: PathBuf,
+
+        #[arg(long, default_value = "6h", help = "Time gap threshold for album grouping, e.g. 4h, 2d")]
+        time_gap: String,
+
+        #[arg(long, default_value = "5", help = "Geographic radius threshold in km for spatial clustering")]
+        geo_radius: f64,
+
+        #[arg(long, help = "Force full rebuild of all albums, ignoring incremental state")]
+        rebuild: bool,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

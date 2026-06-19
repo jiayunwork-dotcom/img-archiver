@@ -32,13 +32,13 @@ impl ImageFormat {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct GpsLocation {
     pub latitude: f64,
     pub longitude: f64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[allow(dead_code)]
 pub struct GeoLocation {
     pub province: String,

@@ -1,3 +1,4 @@
+mod album;
 mod archiver;
 mod cli;
 mod dedup;
@@ -18,11 +19,113 @@ use std::collections::HashMap;
 use types::*;
 
 fn main() {
-    let mut args = cli::Cli::parse();
+    let cli_args = cli::Cli::parse();
+
+    match cli_args.command {
+        Some(cli::Commands::Album {
+            input,
+            output_album,
+            time_gap,
+            geo_radius,
+            rebuild,
+        }) => {
+            execute_album(&input, &output_album, &time_gap, geo_radius, rebuild);
+            return;
+        }
+        Some(cli::Commands::Archive {
+            source,
+            output,
+            template,
+            mode,
+            exclude,
+            yes,
+            dry_run,
+            create_dirs,
+            seq_digits,
+            unknown_placeholder,
+            config,
+            stats,
+            report_json,
+            report_html,
+            incremental,
+            undo,
+        }) => {
+            let mut args = cli::Cli {
+                command: None,
+                source: Some(source),
+                output: Some(output),
+                template,
+                mode,
+                exclude,
+                yes,
+                dry_run,
+                create_dirs,
+                seq_digits,
+                unknown_placeholder,
+                config,
+                stats,
+                report_json,
+                report_html,
+                incremental,
+                undo,
+            };
+            execute_archive(&mut args);
+            return;
+        }
+        None => {
+            if cli_args.source.is_some() {
+                let mut args = cli_args.clone();
+                execute_archive(&mut args);
+                return;
+            }
+            eprintln!("Error: No subcommand or legacy args provided.");
+            eprintln!("Use 'img-archiver --help' for usage information.");
+            eprintln!("Subcommands: archive (or legacy positional args), album");
+            std::process::exit(1);
+        }
+    }
+}
+
+fn execute_album(
+    input: &std::path::Path,
+    output_album: &std::path::Path,
+    time_gap: &str,
+    geo_radius: f64,
+    rebuild: bool,
+) {
+    if !input.exists() {
+        eprintln!("Error: Input archive directory does not exist: {}", input.display());
+        std::process::exit(1);
+    }
+
+    match album::run_album(input, output_album, time_gap, geo_radius, rebuild) {
+        Ok(_) => eprintln!("相册生成完成。"),
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+fn execute_archive(args: &mut cli::Cli) {
+    let source = match args.source.clone() {
+        Some(s) => s,
+        None => {
+            eprintln!("Error: Source directory is required.");
+            std::process::exit(1);
+        }
+    };
+    let output = match args.output.clone() {
+        Some(o) => o,
+        None => {
+            eprintln!("Error: Output directory (--output) is required.");
+            std::process::exit(1);
+        }
+    };
 
     if let Some(ref config_path) = args.config {
         match cli::AppConfig::load(config_path) {
-            Ok(config) => config.apply_to_cli(&mut args),
+            Ok(config) => config.apply_to_cli(args),
             Err(e) => {
                 eprintln!("Error loading config: {}", e);
                 std::process::exit(1);
@@ -31,7 +134,7 @@ fn main() {
     }
 
     if args.undo {
-        execute_undo(&args.output);
+        execute_undo(&output);
         return;
     }
 
@@ -43,24 +146,24 @@ fn main() {
         }
     };
 
-    if !args.source.exists() {
-        eprintln!("Error: Source directory does not exist: {}", args.source.display());
+    if !source.exists() {
+        eprintln!("Error: Source directory does not exist: {}", source.display());
         std::process::exit(1);
     }
 
-    if !args.output.exists() && !args.create_dirs {
-        eprintln!("Error: Output directory does not exist: {}. Use --create-dirs to auto-create.", args.output.display());
+    if !output.exists() && !args.create_dirs {
+        eprintln!("Error: Output directory does not exist: {}. Use --create-dirs to auto-create.", output.display());
         std::process::exit(1);
     }
 
-    if !args.output.exists() && args.create_dirs {
-        if let Err(e) = std::fs::create_dir_all(&args.output) {
+    if !output.exists() && args.create_dirs {
+        if let Err(e) = std::fs::create_dir_all(&output) {
             eprintln!("Error: Failed to create output directory: {}", e);
             std::process::exit(1);
         }
     }
 
-    let scanner = match scanner::Scanner::new(&args.source, &args.exclude) {
+    let scanner = match scanner::Scanner::new(&source, &args.exclude) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("Error: {}", e);
@@ -68,7 +171,7 @@ fn main() {
         }
     };
 
-    eprintln!("Scanning directory: {}", args.source.display());
+    eprintln!("Scanning directory: {}", source.display());
     let entries = match scanner.scan() {
         Ok(e) => e,
         Err(e) => {
@@ -92,7 +195,7 @@ fn main() {
         }
     }
 
-    let mut archive_index = index::ArchiveIndex::load(&args.output).unwrap_or_else(|e| {
+    let mut archive_index = index::ArchiveIndex::load(&output).unwrap_or_else(|e| {
         eprintln!("Warning: Could not load archive index ({}). Starting fresh.", e);
         index::ArchiveIndex::new()
     });
@@ -270,7 +373,7 @@ fn main() {
             &args.unknown_placeholder,
         );
 
-        let target_path = args.output.join(&rendered);
+        let target_path = output.join(&rendered);
 
         let img_info = ImageInfo {
             path: path.clone(),
@@ -285,7 +388,7 @@ fn main() {
         if dup_info.dup_type == DuplicateType::Suspected {
             run_stats.suspected_duplicates += 1;
 
-            let dup_dir = args.output.join("duplicates");
+            let dup_dir = output.join("duplicates");
             let dup_target = dup_dir.join(path.file_name().unwrap_or_default());
 
             if let Some(orig_path) = &dup_info.original_path {
@@ -331,6 +434,9 @@ fn main() {
                     sha256: sha256.clone(),
                     phash: phash_val,
                     archived_at: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+                    date_time: Some(format!("{}", metadata.date_time.format("%Y-%m-%d %H:%M:%S"))),
+                    gps: metadata.gps.clone(),
+                    geo: metadata.geo.clone(),
                 };
                 archive_index.add_entry(index_entry);
 
@@ -370,12 +476,12 @@ fn main() {
             let _ = std::fs::copy(src, dst);
         }
 
-        if let Err(e) = archive_index.save(&args.output) {
+        if let Err(e) = archive_index.save(&output) {
             eprintln!("Warning: Failed to save archive index: {}", e);
         }
 
         if !undo_record.entries.is_empty() {
-            if let Err(e) = undo_record.save(&args.output) {
+            if let Err(e) = undo_record.save(&output) {
                 eprintln!("Warning: Failed to save undo record: {}", e);
             }
         }
