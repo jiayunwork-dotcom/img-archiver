@@ -320,12 +320,19 @@ fn gen_thumbnail(src: &Path, dst: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn thumbnail_filename(src_path: &Path) -> String {
-    let stem = src_path
+fn thumbnail_filename(photo: &PhotoEntry) -> String {
+    let stem = photo
+        .archive_path_abs
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("unknown");
-    format!("{}.jpg", stem)
+    let hash_len = photo.entry.sha256.len().min(10);
+    let hash_prefix = if hash_len > 0 {
+        &photo.entry.sha256[..hash_len]
+    } else {
+        "unknown"
+    };
+    format!("{}_{}.jpg", hash_prefix, stem)
 }
 
 fn render_css() -> String {
@@ -365,7 +372,7 @@ fn render_index_page(albums: &[Album], total_photos: usize, thumbs_dir: &str) ->
             let cover_thumb = album
                 .photos
                 .first()
-                .map(|p| format!("{}/{}", thumbs_dir, thumbnail_filename(&p.archive_path_abs)))
+                .map(|p| format!("{}/{}", thumbs_dir, thumbnail_filename(p)))
                 .unwrap_or_else(|| "".to_string());
             let date_range = if album.start_date == album.end_date {
                 format!("{}", album.start_date.format("%Y-%m-%d"))
@@ -436,7 +443,7 @@ fn render_album_detail(album: &Album, _idx: usize, thumbs_dir: &str) -> String {
         .photos
         .iter()
         .map(|p| {
-            let thumb = format!("{}/{}", thumbs_dir, thumbnail_filename(&p.archive_path_abs));
+            let thumb = format!("{}/{}", thumbs_dir, thumbnail_filename(p));
             let filename = p
                 .archive_path_abs
                 .file_name()
@@ -543,9 +550,9 @@ pub fn run_album(
 
     let all_photos = enrich_entries(&index, input);
 
-    let photos_to_process: Vec<PhotoEntry> = if let Some(last_dt) = last_run {
+    let new_photo_count: usize = if let Some(last_dt) = last_run {
         eprintln!(
-            "增量模式：上次运行时间 {}，仅处理新归档的图片",
+            "增量模式：上次运行时间 {}，检测新归档的图片",
             last_dt.format("%Y-%m-%d %H:%M:%S")
         );
         all_photos
@@ -555,13 +562,12 @@ pub fn run_album(
                     .map(|d| d > last_dt)
                     .unwrap_or(true)
             })
-            .cloned()
-            .collect()
+            .count()
     } else {
-        all_photos.clone()
+        all_photos.len()
     };
 
-    if photos_to_process.is_empty() && !rebuild {
+    if new_photo_count == 0 && !rebuild {
         eprintln!("没有新图片需要处理，任务结束。");
         let now_str = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
         let meta = AlbumMeta {
@@ -572,9 +578,13 @@ pub fn run_album(
         return Ok(());
     }
 
-    eprintln!("共载入 {} 条索引记录，本次处理 {} 条", all_photos.len(), photos_to_process.len());
+    eprintln!(
+        "共载入 {} 条索引记录，本次新增 {} 条（全量重建相册）",
+        all_photos.len(),
+        new_photo_count
+    );
 
-    let time_groups = cluster_by_time(&photos_to_process, gap_sec);
+    let time_groups = cluster_by_time(&all_photos, gap_sec);
     eprintln!("时间聚类：分为 {} 个时间组", time_groups.len());
 
     let mut geo_clusters: Vec<Vec<PhotoEntry>> = Vec::new();
@@ -588,9 +598,23 @@ pub fn run_album(
     albums.sort_by(|a, b| b.start_date.cmp(&a.start_date).then_with(|| b.name.cmp(&a.name)));
 
     let total_photos: usize = albums.iter().map(|a| a.photos.len()).sum();
-    eprintln!("开始生成缩略图（共 {} 张）...", total_photos);
+    let thumbs_to_generate: usize = albums
+        .iter()
+        .flat_map(|a| a.photos.iter())
+        .filter(|p| {
+            let thumb_name = thumbnail_filename(p);
+            let thumb_path = thumbs_dir.join(&thumb_name);
+            rebuild || !thumb_path.exists()
+        })
+        .count();
+    eprintln!(
+        "开始生成缩略图（共 {} 张，需生成 {} 张，跳过已存在 {} 张）",
+        total_photos,
+        thumbs_to_generate,
+        total_photos - thumbs_to_generate
+    );
 
-    let pb = ProgressBar::new(total_photos as u64);
+    let pb = ProgressBar::new(thumbs_to_generate.max(1) as u64);
     pb.set_style(
         ProgressStyle::with_template(
             "{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} ({eta})",
@@ -603,11 +627,10 @@ pub fn run_album(
 
     for album in &albums {
         for photo in &album.photos {
-            let thumb_name = thumbnail_filename(&photo.archive_path_abs);
+            let thumb_name = thumbnail_filename(photo);
             let thumb_path = thumbs_dir.join(&thumb_name);
 
             if thumb_path.exists() && !rebuild {
-                pb.inc(1);
                 continue;
             }
 
@@ -640,6 +663,22 @@ pub fn run_album(
         }
     }
     pb.finish_with_message("缩略图处理完成");
+
+    eprintln!("清理旧 HTML 页面...");
+    if let Ok(entries) = std::fs::read_dir(output_album) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                let is_old_index = name == "index.html";
+                let is_old_album = name.starts_with("album_") && name.ends_with(".html");
+                if is_old_index || is_old_album {
+                    if let Err(e) = std::fs::remove_file(&path) {
+                        eprintln!("  警告：删除旧文件失败 {}: {}", path.display(), e);
+                    }
+                }
+            }
+        }
+    }
 
     eprintln!("生成 HTML 页面...");
 
