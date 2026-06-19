@@ -28,8 +28,15 @@ fn main() {
             time_gap,
             geo_radius,
             rebuild,
+            merge,
+            split,
+            search,
+            search_date,
+            search_location,
+            search_name,
+            search_output,
         }) => {
-            execute_album(&input, &output_album, &time_gap, geo_radius, rebuild);
+            execute_album(&input, &output_album, &time_gap, geo_radius, rebuild, merge.as_deref(), split.as_deref(), search, search_date.as_deref(), search_location.as_deref(), search_name.as_deref(), search_output.as_deref());
             return;
         }
         Some(cli::Commands::Archive {
@@ -92,10 +99,77 @@ fn execute_album(
     time_gap: &str,
     geo_radius: f64,
     rebuild: bool,
+    merge: Option<&str>,
+    split: Option<&str>,
+    search: bool,
+    search_date: Option<&str>,
+    search_location: Option<&str>,
+    search_name: Option<&str>,
+    search_output: Option<&std::path::Path>,
 ) {
     if !input.exists() {
         eprintln!("Error: Input archive directory does not exist: {}", input.display());
         std::process::exit(1);
+    }
+
+    let mode_count = [merge.is_some(), split.is_some(), search || search_date.is_some() || search_location.is_some() || search_name.is_some()]
+        .iter()
+        .filter(|&&x| x)
+        .count();
+
+    if mode_count > 1 {
+        eprintln!("Error: --merge、--split 和 --search (含子参数) 不能同时使用，请选择其中一种操作。");
+        std::process::exit(1);
+    }
+
+    if let Some(merge_arg) = merge {
+        match album::run_merge(input, output_album, merge_arg) {
+            Ok(_) => eprintln!("相册合并操作完成。"),
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+
+    if let Some(split_arg) = split {
+        match album::run_split(input, output_album, split_arg) {
+            Ok(_) => eprintln!("相册拆分操作完成。"),
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+
+    if search || search_date.is_some() || search_location.is_some() || search_name.is_some() {
+        let date_range = match search_date {
+            Some(s) => {
+                let dr = album::parse_date_range(s).unwrap_or_else(|e| {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                });
+                Some(dr)
+            }
+            None => None,
+        };
+
+        let criteria = album::SearchCriteria {
+            date_range,
+            location: search_location,
+            name_keyword: search_name,
+        };
+
+        match album::run_search(input, output_album, criteria, search_output) {
+            Ok(_) => eprintln!("搜索操作完成。"),
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        return;
     }
 
     match album::run_album(input, output_album, time_gap, geo_radius, rebuild) {

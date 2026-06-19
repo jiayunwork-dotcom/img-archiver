@@ -125,6 +125,27 @@ pub enum Commands {
 
         #[arg(long, help = "Force full rebuild of all albums, ignoring incremental state")]
         rebuild: bool,
+
+        #[arg(long, help = "Merge multiple albums: comma-separated list of album names, first is target")]
+        merge: Option<String>,
+
+        #[arg(long, help = "Split an album: format \"ALBUM_NAME:N\" where N is the split point")]
+        split: Option<String>,
+
+        #[arg(long, help = "Enable photo search mode (use with --search-date/--search-location/--search-name)")]
+        search: bool,
+
+        #[arg(long, help = "Search by date range, format \"YYYY-MM-DD~YYYY-MM-DD\" (inclusive)")]
+        search_date: Option<String>,
+
+        #[arg(long, help = "Search by province name (fuzzy match, e.g. \"北京\" matches \"北京市\")")]
+        search_location: Option<String>,
+
+        #[arg(long, help = "Search by filename keyword (substring match, case-insensitive)")]
+        search_name: Option<String>,
+
+        #[arg(long, help = "Output directory for search result thumbnails and HTML page")]
+        search_output: Option<PathBuf>,
     },
 }
 
