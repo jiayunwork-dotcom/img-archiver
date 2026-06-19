@@ -128,13 +128,23 @@ fn main() {
     for (path, file_size, format) in &entries {
         pb.set_message(format!("Processing {}", path.display()));
 
-        if *format == ImageFormat::Heic && !metadata::is_heic_supported() {
+        let heic_unsupported = *format == ImageFormat::Heic && !metadata::is_heic_supported();
+
+        if heic_unsupported {
             if args.incremental {
                 let sha256 = match dedup::Deduplicator::compute_sha256(path) {
                     Ok(h) => h,
                     Err(e) => {
                         run_stats.failed += 1;
-                        run_stats.failures.push((path.display().to_string(), e));
+                        run_stats.failures.push((path.display().to_string(), e.clone()));
+                        json_report.failed.push(report::JsonImageEntry {
+                            source_path: path.display().to_string(),
+                            archive_path: None,
+                            camera: "unknown".to_string(),
+                            date: "unknown".to_string(),
+                            sha256: String::new(),
+                            reason: Some(format!("Failed to compute SHA-256: {}", e)),
+                        });
                         pb.inc(1);
                         continue;
                     }
@@ -196,26 +206,7 @@ fn main() {
 
         let phash_val = match dedup::Deduplicator::compute_phash(path) {
             Ok(h) => h,
-            Err(e) => {
-                if *format == ImageFormat::Heic && e.contains("unsupported") {
-                    run_stats.failed += 1;
-                    run_stats.failures.push((
-                        path.display().to_string(),
-                        "unsupported codec (HEIC)".to_string(),
-                    ));
-                    json_report.failed.push(report::JsonImageEntry {
-                        source_path: path.display().to_string(),
-                        archive_path: None,
-                        camera: "unknown".to_string(),
-                        date: "unknown".to_string(),
-                        sha256: sha256.clone(),
-                        reason: Some("unsupported codec".to_string()),
-                    });
-                    pb.inc(1);
-                    continue;
-                }
-                0u64
-            }
+            Err(_) => 0u64,
         };
 
         if !args.incremental && existing_sha256.contains(&sha256) {
@@ -392,9 +383,13 @@ fn main() {
 
     run_stats.print_report();
 
-    if args.stats {
+    let need_stats = args.stats || args.report_html.is_some() || args.report_json.is_some();
+    if need_stats {
         let stats = report::Stats::from_images(&all_images);
-        stats.print_stats();
+
+        if args.stats {
+            stats.print_stats();
+        }
 
         json_report.by_camera = stats.by_camera;
         json_report.by_year_month = stats.by_year_month;
@@ -462,9 +457,28 @@ fn execute_undo(output_dir: &std::path::Path) {
         record.timestamp
     );
 
+    let mut archive_index = index::ArchiveIndex::load(output_dir).unwrap_or_else(|e| {
+        eprintln!("Warning: Could not load archive index ({}). Starting fresh.", e);
+        index::ArchiveIndex::new()
+    });
+    let initial_index_len = archive_index.entries.len();
+
     match record.execute() {
         Ok((restored, failed)) => {
             eprintln!("Undo completed: {} restored, {} failed", restored, failed);
+
+            for entry in &record.entries {
+                archive_index.remove_by_archive_path(&entry.archive_path);
+            }
+
+            let removed = initial_index_len - archive_index.entries.len();
+            if removed > 0 {
+                match archive_index.save(output_dir) {
+                    Ok(_) => eprintln!("Archive index updated: {} entries removed.", removed),
+                    Err(e) => eprintln!("Warning: Failed to update archive index: {}", e),
+                }
+            }
+
             if failed == 0 {
                 if let Err(e) = undo::UndoRecord::delete(output_dir) {
                     eprintln!("Warning: Failed to delete undo record: {}", e);

@@ -51,6 +51,10 @@ impl ArchiveIndex {
         self.entries.push(entry);
     }
 
+    pub fn remove_by_archive_path(&mut self, archive_path: &str) {
+        self.entries.retain(|e| e.archive_path != archive_path);
+    }
+
     pub fn sha256_set(&self) -> std::collections::HashSet<String> {
         self.entries.iter().map(|e| e.sha256.clone()).collect()
     }
