@@ -6,6 +6,7 @@ pub enum ImageFormat {
     Png,
     Tiff,
     WebP,
+    Heic,
 }
 
 impl ImageFormat {
@@ -15,6 +16,7 @@ impl ImageFormat {
             "png" => Some(Self::Png),
             "tif" | "tiff" => Some(Self::Tiff),
             "webp" => Some(Self::WebP),
+            "heic" | "heif" => Some(Self::Heic),
             _ => None,
         }
     }
@@ -25,6 +27,7 @@ impl ImageFormat {
             Self::Png => "PNG",
             Self::Tiff => "TIFF",
             Self::WebP => "WebP",
+            Self::Heic => "HEIC",
         }
     }
 }

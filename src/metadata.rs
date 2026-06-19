@@ -185,7 +185,7 @@ fn parse_gps_coordinate(coord_str: &str, ref_str: &str) -> Option<f64> {
 }
 
 fn read_dimensions(path: &std::path::Path, format: ImageFormat) -> (u32, u32) {
-    if format == ImageFormat::Jpeg || format == ImageFormat::Png || format == ImageFormat::WebP {
+    if format != ImageFormat::Tiff {
         if let Ok(dimensions) = image::image_dimensions(path) {
             return dimensions;
         }
@@ -220,4 +220,8 @@ fn read_dimensions(path: &std::path::Path, format: ImageFormat) -> (u32, u32) {
     }
 
     (0, 0)
+}
+
+pub fn is_heic_supported() -> bool {
+    false
 }

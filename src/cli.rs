@@ -43,6 +43,15 @@ pub struct Cli {
 
     #[arg(long, help = "Export report as JSON to specified path")]
     pub report_json: Option<PathBuf>,
+
+    #[arg(long, help = "Export report as standalone HTML to specified path")]
+    pub report_html: Option<PathBuf>,
+
+    #[arg(long, help = "Incremental mode: skip images already in archive index by SHA-256")]
+    pub incremental: bool,
+
+    #[arg(long, help = "Undo the last archive operation in the output directory")]
+    pub undo: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

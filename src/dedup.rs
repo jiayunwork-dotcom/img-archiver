@@ -69,4 +69,13 @@ impl Deduplicator {
             .insert(sha256.to_string(), path.to_path_buf());
         self.phash_index.insert(phash, path.to_path_buf());
     }
+
+    pub fn get_phash_for_path(&self, target_path: &Path) -> Option<u64> {
+        for (&phash, path) in &self.phash_index {
+            if path == target_path {
+                return Some(phash);
+            }
+        }
+        None
+    }
 }

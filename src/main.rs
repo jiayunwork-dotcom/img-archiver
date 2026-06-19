@@ -10,6 +10,7 @@ mod report;
 mod scanner;
 mod template;
 mod types;
+mod undo;
 
 use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -27,6 +28,11 @@ fn main() {
                 std::process::exit(1);
             }
         }
+    }
+
+    if args.undo {
+        execute_undo(&args.output);
+        return;
     }
 
     let mode = match ArchiveMode::from_str(&args.mode) {
@@ -111,13 +117,58 @@ fn main() {
     let mut run_stats = report::RunStats::new();
     let mut all_images: Vec<ImageInfo> = Vec::new();
     let mut suspected_dup_targets: Vec<(std::path::PathBuf, std::path::PathBuf)> = Vec::new();
+    let mut suspected_dups_with_distance: Vec<(String, String, u32)> = Vec::new();
     let mut seq_counter: HashMap<String, usize> = HashMap::new();
+
+    let mut undo_record = undo::UndoRecord::new(mode);
 
     let mut json_report = report::JsonReport::new();
     json_report.summary.total_images = entries.len();
 
     for (path, file_size, format) in &entries {
         pb.set_message(format!("Processing {}", path.display()));
+
+        if *format == ImageFormat::Heic && !metadata::is_heic_supported() {
+            if args.incremental {
+                let sha256 = match dedup::Deduplicator::compute_sha256(path) {
+                    Ok(h) => h,
+                    Err(e) => {
+                        run_stats.failed += 1;
+                        run_stats.failures.push((path.display().to_string(), e));
+                        pb.inc(1);
+                        continue;
+                    }
+                };
+                if existing_sha256.contains(&sha256) {
+                    run_stats.skipped_duplicates += 1;
+                    json_report.skipped_duplicates.push(report::JsonImageEntry {
+                        source_path: path.display().to_string(),
+                        archive_path: None,
+                        camera: "unknown".to_string(),
+                        date: "unknown".to_string(),
+                        sha256: sha256.clone(),
+                        reason: Some("Already archived (SHA-256 match)".to_string()),
+                    });
+                    pb.inc(1);
+                    continue;
+                }
+            }
+            run_stats.failed += 1;
+            run_stats.failures.push((
+                path.display().to_string(),
+                "unsupported codec (HEIC)".to_string(),
+            ));
+            json_report.failed.push(report::JsonImageEntry {
+                source_path: path.display().to_string(),
+                archive_path: None,
+                camera: "unknown".to_string(),
+                date: "unknown".to_string(),
+                sha256: String::new(),
+                reason: Some("unsupported codec".to_string()),
+            });
+            pb.inc(1);
+            continue;
+        }
 
         let sha256 = match dedup::Deduplicator::compute_sha256(path) {
             Ok(h) => h,
@@ -129,7 +180,7 @@ fn main() {
             }
         };
 
-        if existing_sha256.contains(&sha256) {
+        if args.incremental && existing_sha256.contains(&sha256) {
             run_stats.skipped_duplicates += 1;
             json_report.skipped_duplicates.push(report::JsonImageEntry {
                 source_path: path.display().to_string(),
@@ -145,8 +196,41 @@ fn main() {
 
         let phash_val = match dedup::Deduplicator::compute_phash(path) {
             Ok(h) => h,
-            Err(_) => 0u64,
+            Err(e) => {
+                if *format == ImageFormat::Heic && e.contains("unsupported") {
+                    run_stats.failed += 1;
+                    run_stats.failures.push((
+                        path.display().to_string(),
+                        "unsupported codec (HEIC)".to_string(),
+                    ));
+                    json_report.failed.push(report::JsonImageEntry {
+                        source_path: path.display().to_string(),
+                        archive_path: None,
+                        camera: "unknown".to_string(),
+                        date: "unknown".to_string(),
+                        sha256: sha256.clone(),
+                        reason: Some("unsupported codec".to_string()),
+                    });
+                    pb.inc(1);
+                    continue;
+                }
+                0u64
+            }
         };
+
+        if !args.incremental && existing_sha256.contains(&sha256) {
+            run_stats.skipped_duplicates += 1;
+            json_report.skipped_duplicates.push(report::JsonImageEntry {
+                source_path: path.display().to_string(),
+                archive_path: None,
+                camera: "unknown".to_string(),
+                date: "unknown".to_string(),
+                sha256: sha256.clone(),
+                reason: Some("Already archived (SHA-256 match)".to_string()),
+            });
+            pb.inc(1);
+            continue;
+        }
 
         let dup_info = dedup.check_duplicate(&sha256, phash_val);
 
@@ -213,6 +297,16 @@ fn main() {
             let dup_dir = args.output.join("duplicates");
             let dup_target = dup_dir.join(path.file_name().unwrap_or_default());
 
+            if let Some(orig_path) = &dup_info.original_path {
+                let orig_phash = dedup.get_phash_for_path(orig_path).unwrap_or(0);
+                let dist = crate::phash::hamming_distance(orig_phash, phash_val);
+                suspected_dups_with_distance.push((
+                    path.file_name().and_then(|f| f.to_str()).unwrap_or("unknown").to_string(),
+                    orig_path.display().to_string(),
+                    dist,
+                ));
+            }
+
             json_report.suspected_duplicates.push(report::JsonImageEntry {
                 source_path: path.display().to_string(),
                 archive_path: Some(dup_target.display().to_string()),
@@ -242,17 +336,22 @@ fn main() {
             if !args.dry_run {
                 let index_entry = index::IndexEntry {
                     source_path: path.display().to_string(),
-                    archive_path: target_path.display().to_string(),
+                    archive_path: result.target.display().to_string(),
                     sha256: sha256.clone(),
                     phash: phash_val,
                     archived_at: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
                 };
                 archive_index.add_entry(index_entry);
+
+                undo_record.add_entry(
+                    path.display().to_string(),
+                    result.target.display().to_string(),
+                );
             }
 
             json_report.archived.push(report::JsonImageEntry {
                 source_path: path.display().to_string(),
-                archive_path: Some(target_path.display().to_string()),
+                archive_path: Some(result.target.display().to_string()),
                 camera: metadata.camera_model.clone(),
                 date: format!("{}", metadata.date_time.format("%Y-%m-%d")),
                 sha256: sha256.clone(),
@@ -282,6 +381,12 @@ fn main() {
 
         if let Err(e) = archive_index.save(&args.output) {
             eprintln!("Warning: Failed to save archive index: {}", e);
+        }
+
+        if !undo_record.entries.is_empty() {
+            if let Err(e) = undo_record.save(&args.output) {
+                eprintln!("Warning: Failed to save undo record: {}", e);
+            }
         }
     }
 
@@ -323,6 +428,56 @@ fn main() {
         match json_report.save(report_path) {
             Ok(_) => eprintln!("JSON report saved to: {}", report_path.display()),
             Err(e) => eprintln!("Error saving JSON report: {}", e),
+        }
+    }
+
+    if let Some(ref report_path) = args.report_html {
+        match json_report.save_html(report_path, &suspected_dups_with_distance) {
+            Ok(_) => eprintln!("HTML report saved to: {}", report_path.display()),
+            Err(e) => eprintln!("Error saving HTML report: {}", e),
+        }
+    }
+}
+
+fn execute_undo(output_dir: &std::path::Path) {
+    if !output_dir.exists() {
+        eprintln!("Error: Output directory does not exist: {}", output_dir.display());
+        std::process::exit(1);
+    }
+
+    eprintln!("Loading undo record from: {}", output_dir.display());
+
+    let record = match undo::UndoRecord::load(output_dir) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    eprintln!(
+        "Undo record found: {} operations, mode: {}, timestamp: {}",
+        record.entries.len(),
+        record.mode,
+        record.timestamp
+    );
+
+    match record.execute() {
+        Ok((restored, failed)) => {
+            eprintln!("Undo completed: {} restored, {} failed", restored, failed);
+            if failed == 0 {
+                if let Err(e) = undo::UndoRecord::delete(output_dir) {
+                    eprintln!("Warning: Failed to delete undo record: {}", e);
+                } else {
+                    eprintln!("Undo record deleted.");
+                }
+            } else {
+                eprintln!("Some operations failed; undo record preserved for manual inspection.");
+            }
+        }
+        Err(e) => {
+            eprintln!("Error during undo: {}", e);
+            std::process::exit(1);
         }
     }
 }
